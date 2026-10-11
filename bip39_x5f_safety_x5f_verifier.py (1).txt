@@ -1,0 +1,101 @@
+"""
+Offline Bitcoin Wallet Safety Verifier
+Based on your notes: 128 bits entropy + 4 bits checksum = 132 bits = 12 words
+And bech32 decoding: q=00000, m=11011 etc.
+
+100% Offline - No internet needed, no seed sent anywhere
+"""
+import hashlib
+
+# Bech32 charset from your notes
+BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+# Your note: q-00000, m-11011, U-11100 etc = this charset index
+# Example: q=0, p=1, z=2, r=3, y=4, 9=5, x=6, 8=7, g=8, f=9, 2=10, t=11, v=12, d=13, w=14, 0=15, s=16, 3=17, j=18, n=19, 5=20, 4=21, k=22, h=23, c=24, e=25, 6=26, m=27, u=28, a=29, 7=30, l=31
+
+def load_wordlist(path="bip39_wordlist.txt"):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return [w.strip() for w in f]
+    except:
+        print(f"Please download bip39_wordlist.txt from https://github.com/bitcoin/bips/blob/master/bip-0039/english.txt")
+        return None
+
+def verify_mnemonic(mnemonic, wordlist):
+    words = mnemonic.strip().lower().split()
+    if len(words) not in [12,15,18,21,24]:
+        return False, f"Word count {len(words)} invalid. Should be 12/15/18/21/24"
+    
+    # 11 bits per word as per your notes
+    bits = ""
+    for w in words:
+        if w not in wordlist:
+            return False, f"Word '{w}' not in BIP39 list"
+        idx = wordlist.index(w)
+        bits += format(idx, '011b')
+    
+    total_bits = len(bits)
+    ent_bits_len = total_bits * 32 // 33
+    cs_bits_len = total_bits - ent_bits_len
+    
+    print(f"\nYour notes logic:")
+    print(f"Total bits = {total_bits} ({len(words)} words x 11)")
+    print(f"Entropy = {ent_bits_len} bits (your 128)")
+    print(f"Checksum = {cs_bits_len} bits (your 4)")
+    
+    entropy_bits = bits[:ent_bits_len]
+    checksum_bits = bits[ent_bits_len:]
+    
+    entropy_bytes = int(entropy_bits, 2).to_bytes(ent_bits_len//8, 'big')
+    hash_bytes = hashlib.sha256(entropy_bytes).digest()
+    hash_bits = format(int.from_bytes(hash_bytes, 'big'), '0256b')
+    calculated_cs = hash_bits[:cs_bits_len]
+    
+    print(f"Checksum from words: {checksum_bits}")
+    print(f"Checksum from SHA256: {calculated_cs}")
+    
+    if checksum_bits == calculated_cs:
+        return True, "✅ Checksum MATCH - Your seed is 100% valid as per BIP39!"
+    else:
+        return False, "❌ Checksum MISMATCH - Seed is invalid!"
+
+def decode_bech32_address(address):
+    """Decode bc1q address using your notes q=00000 logic"""
+    print(f"\n--- Bech32 Decode for {address} ---")
+    address = address.lower()
+    if not address.startswith("bc1q"):
+        print("Only bc1q (native segwit) supported")
+        return
+    
+    data_part = address[4:]  # after bc1q
+    print(f"Data part: {data_part}")
+    print("Your 5-bit decoding (from your notes):")
+    for char in data_part[:20]:  # first 20 for demo
+        if char in BECH32_CHARSET:
+            idx = BECH32_CHARSET.index(char)
+            bits = format(idx, '05b')
+            print(f"  {char} -> {idx:2d} -> {bits} (like your m-11011)")
+        else:
+            print(f"  {char} -> invalid")
+
+if __name__ == "__main__":
+    wordlist = load_wordlist()
+    if not wordlist:
+        exit()
+    
+    print("=== Bitcoin Wallet Safety Verifier ===")
+    print("This DOES NOT extract seed from address. It verifies YOUR OWN seed.")
+    print("Keep internet OFF while using.\n")
+    
+    # Example with your pattern (DO NOT put real seed with funds here)
+    # Replace with your 12 words for local test
+    test_mnemonic = input("Enter your 12 words (space separated) for verification:\n> ")
+    
+    valid, msg = verify_mnemonic(test_mnemonic, wordlist)
+    print(f"\n{msg}")
+    
+    if valid:
+        addr = input("\nEnter your bc1q address to see 5-bit decoding (optional):\n> ")
+        if addr:
+            decode_bech32_address(addr)
+            print("\nNote: These 5-bit numbers are NOT your seed words. They are bech32 checksum/witness program.")
+            print("BIP39 uses 11-bit (0-2047), Bech32 uses 5-bit (0-31) - different lists!")
